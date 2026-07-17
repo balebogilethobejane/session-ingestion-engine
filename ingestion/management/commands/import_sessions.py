@@ -4,13 +4,10 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from ingestion.models import RawSessionRow, ConsolidatedSession
 
-
 class Command(BaseCommand):
     help = "Import training sessions from a CSV file with idempotent processing"
-
     def add_arguments(self, parser):
         parser.add_argument("csv_file", type=str, help="Path to the CSV file to import")
-
     def handle(self, *args, **options):
         csv_file = options["csv_file"]
         
@@ -22,6 +19,8 @@ class Command(BaseCommand):
         except Exception as e:
             self.stderr.write(f"Unexpected error: {e}")
 
+    # Import the entire CSV in a single transaction so that
+    # the database is never left in a partially imported state.
     @transaction.atomic
     def import_sessions(self, csv_file):
         self.stdout.write(f"Starting import of {csv_file}")
@@ -36,8 +35,11 @@ class Command(BaseCommand):
         
         try:
             with open(csv_file, newline="", encoding="utf-8") as file:
+                # Read the CSV one row at a time to keep memory usage low,
+                # even when importing large files.
                 reader = csv.DictReader(file)
-                
+        
+                # Process rows in batches to reduce the number of database writes.
                 batch_size = 100
                 raw_batch = []
                 consolidated_updates = []
@@ -69,9 +71,7 @@ class Command(BaseCommand):
             raise
             
         return stats
-
     def process_row(self, row, source_file, stats):
-        # Validate required fields
         required_fields = ['session_code', 'organisation', 'programme', 
                           'facilitator', 'session_date', 'attendees']
         
@@ -124,18 +124,25 @@ class Command(BaseCommand):
             'raw_data': raw_data,
             'consolidation_data': consolidation_data
         }
-
     def process_batch(self, raw_batch, consolidation_batch, stats):
         if not raw_batch:
             return
         
-        raw_objects = [RawSessionRow(**data) for data in raw_batch]
+        # Consolidate first to get consolidated session objects
+        consolidated_map = {}
+        for data in consolidation_batch:
+            consolidated = self.consolidate_session(data, stats)
+            consolidated_map[data['normalized_session_code']] = consolidated
+        # Create raw rows linked to their consolidated session
+        raw_objects = []
+        for data in raw_batch:
+            consolidated = consolidated_map.get(data['normalized_session_code'])
+            raw_objects.append(RawSessionRow(
+                consolidated_session=consolidated,
+                **data
+            ))
         RawSessionRow.objects.bulk_create(raw_objects)
         stats['rows_processed'] += len(raw_batch)
-        
-        for data in consolidation_batch:
-            self.consolidate_session(data, stats)
-
     def consolidate_session(self, session_data, stats):
         normalized_code = session_data['normalized_session_code']
         
@@ -149,9 +156,11 @@ class Command(BaseCommand):
                 existing.attendees = session_data['attendees']
                 existing.save()
                 stats['sessions_updated'] += 1
+            
+            return existing
                 
         except ConsolidatedSession.DoesNotExist:
-            ConsolidatedSession.objects.create(
+            consolidated = ConsolidatedSession.objects.create(
                 normalized_session_code=normalized_code,
                 organisation=session_data['organisation'],
                 programme=session_data['programme'],
@@ -160,7 +169,7 @@ class Command(BaseCommand):
                 attendees=session_data['attendees'],
             )
             stats['sessions_created'] += 1
-
+            return consolidated
     def print_summary(self, stats):
         self.stdout.write("\n" + "="*50)
         self.stdout.write("IMPORT SUMMARY")
