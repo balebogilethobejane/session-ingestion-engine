@@ -4,12 +4,12 @@ Overview
 The system will collect session data from an external reporting portal every three hours. The data moves through a simple pipeline:
 
 External Portal
-        ↓
-   Raw Data
-        ↓
+↓
+Raw Data
+↓
 Consolidated Data
-        ↓
- API / Consumers
+↓
+API / Consumers
 
 Each stage only passes data forward. The raw data is kept as the original record, while the consolidated data is the cleaned version that the API and reports use.
 
@@ -17,11 +17,11 @@ Each stage only passes data forward. The raw data is kept as the original record
 
 The portal may send the same sessions every time it is scraped, so the system needs to avoid creating duplicates.
 
-The session_code is used as the unique identifier after it has been normalised (trimmed and converted to uppercase). This allows AVO-00123 and avo-00123 to be treated as the same session.
+The session\_code is used as the unique identifier after it has been normalised (trimmed and converted to uppercase). This allows AVO-00123 and avo-00123 to be treated as the same session.
 
 To quickly detect identical rows, each row is also hashed using SHA-256 after it has been parsed. If the hash already exists, the row is identical to one that has already been processed, so it is skipped.
 
-If the session_code already exists but the hash is different, it means something has changed, such as the attendee count. The system treats this as a genuine update and applies the consolidation rule, where the highest attendee count is kept.
+If the session\_code already exists but the hash is different, it means something has changed, such as the attendee count. The system treats this as a genuine update and applies the consolidation rule, where the highest attendee count is kept.
 
 This approach makes the import idempotent because importing the same data multiple times does not create duplicate records.
 
@@ -55,7 +55,7 @@ As the system grows and more session data is imported, the database may start to
 
 To improve performance, I would:
 
-Add indexes to fields that are searched often, such as session_code, organisation, programme, and session_date.
+Add indexes to fields that are searched often, such as session\_code, organisation, programme, and session\_date.
 Process data in batches instead of one row at a time.
 Use bulk inserts and updates to reduce the number of database operations.
 Optimise database queries to avoid unnecessary database calls.
@@ -95,6 +95,7 @@ Trade-offs
 I made a few design decisions to keep the system reliable without making it unnecessarily complex.
 
 I chose to restart failed imports instead of trying to resume them because it is simpler and reduces the risk of processing incomplete data.
-I used row hashes to quickly detect identical records while still using the normalised session_code as the main identifier for sessions.
+I used row hashes to quickly detect identical records while still using the normalised session\_code as the main identifier for sessions.
 I kept the raw and consolidated data separate so the original data always remains available for auditing.
 I would not introduce technologies such as Kafka or database sharding at this stage because the system does not yet require that level of complexity. It is better to keep the design simple and only add complexity when there is a clear need.
+
